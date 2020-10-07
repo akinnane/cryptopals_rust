@@ -1,5 +1,8 @@
-use std::collections::BTreeMap;
 use phf::{phf_map, Map};
+use std::collections::BTreeMap;
+use std::fs::File;
+use std::io;
+use std::io::BufRead;
 
 #[cfg(not(test))]
 use log::debug;
@@ -89,7 +92,7 @@ fn detect_english(input: &str) -> f64 {
         })
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct SingleByteXorResult {
     score: f64,
     byte: u8,
@@ -97,11 +100,7 @@ struct SingleByteXorResult {
 }
 
 fn single_byte_xor<S: AsRef<[u8]>>(input: S) -> SingleByteXorResult {
-    let mut best = SingleByteXorResult {
-        score: 0.0,
-        byte: 0_u8,
-        decrypted: "".to_string(),
-    };
+    let mut best = SingleByteXorResult::default();
     for byte in 0_u8..=255 {
         let key = vec![byte; input.as_ref().len()];
         let output = xor(input.as_ref(), &key);
@@ -118,7 +117,6 @@ fn single_byte_xor<S: AsRef<[u8]>>(input: S) -> SingleByteXorResult {
             }
         }
     }
-    debug!("{:#?}", &best);
     best
 }
 
@@ -129,4 +127,22 @@ fn s1c3_single_byte_xor_cipher() {
     let output = single_byte_xor(input);
     assert_eq!(output.byte, 88_u8);
     assert_eq!(output.decrypted, "Cooking MC\'s like a pound of bacon");
+}
+
+#[test]
+fn s1c4_detect_single_character_xor() {
+    let f = File::open("4.txt").unwrap();
+    let reader = io::BufReader::new(f);
+    let mut best = SingleByteXorResult::default();
+    for line in reader.lines() {
+        if let Ok(l) = line {
+            let decoded = hex::decode(l).unwrap();
+            let r = single_byte_xor(&decoded);
+            if r.score > best.score {
+                best = r;
+            }
+        }
+    }
+    assert_eq!(best.byte, 53_u8);
+    assert_eq!(best.decrypted, "Now that the party is jumping\n");
 }
