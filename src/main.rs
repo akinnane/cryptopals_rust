@@ -27,7 +27,7 @@ fn s1c1_convert_hex_to_base64() {
     assert_eq!(output, expected);
 }
 
-fn xor<S: AsRef<[u8]>>(s1: S, s2: S) -> Vec<u8> {
+fn xor<S: AsRef<[u8]>, S1: AsRef<[u8]>>(s1: S, s2: S1) -> Vec<u8> {
     s1.as_ref()
         .iter()
         .zip(s2.as_ref().iter())
@@ -129,20 +129,56 @@ fn s1c3_single_byte_xor_cipher() {
     assert_eq!(output.decrypted, "Cooking MC\'s like a pound of bacon");
 }
 
-#[test]
-fn s1c4_detect_single_character_xor() {
-    let f = File::open("4.txt").unwrap();
-    let reader = io::BufReader::new(f);
+fn detect_single_byte_xor<'a, I, T: 'a, E: 'a>(iter: &mut I) -> SingleByteXorResult
+where
+    I: Iterator<Item = Result<T, E>>,
+    T: AsRef<[u8]>,
+{
     let mut best = SingleByteXorResult::default();
-    for line in reader.lines() {
-        if let Ok(l) = line {
-            let decoded = hex::decode(l).unwrap();
+    while let Some(item) = iter.next() {
+        if let Ok(i) = item {
+            let decoded = hex::decode(i.as_ref()).unwrap();
             let r = single_byte_xor(&decoded);
             if r.score > best.score {
                 best = r;
             }
         }
     }
+    best
+}
+
+#[test]
+fn s1c4_detect_single_character_xor() {
+    let f = File::open("4.txt").unwrap();
+    let reader = io::BufReader::new(f);
+    let best = detect_single_byte_xor(&mut reader.lines());
+
     assert_eq!(best.byte, 53_u8);
     assert_eq!(best.decrypted, "Now that the party is jumping\n");
+}
+
+fn repeating_key_xor<T>(input: T, key: T) -> Vec<u8>
+where
+    T: AsRef<[u8]> + Clone,
+{
+    let k = key
+        .as_ref()
+        .iter()
+        .cycle()
+        .take(input.as_ref().len())
+        .cloned()
+        .collect::<Vec<_>>();
+    xor(input, k)
+}
+
+#[test]
+fn s1c5_implement_repeating_key_xor() {
+    let input = "Burning 'em, if you ain't quick and nimble\nI go crazy when I hear a cymbal";
+    let expected = "0b3637272a2b2e63622c2e69692a23693a2a3c6324202d623d63343c2a26226324272765272a282b2f20430a652e2c652a3124333a653e2b2027630c692b20283165286326302e27282f";
+    let key = "ICE";
+
+    let result = repeating_key_xor(&input, &key);
+    let hex = hex::encode(result);
+
+    assert_eq!(hex, expected);
 }
