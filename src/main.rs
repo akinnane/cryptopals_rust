@@ -218,7 +218,11 @@ fn load_base64_file(path: &str) -> Vec<u8> {
     reader.read_to_end(&mut contents).unwrap();
 
     // https://github.com/marshallpierce/rust-base64/issues/105 :(
-    contents = contents.iter().filter(|b| !b" \n\t\r\x0b\x0c".contains(b)).cloned().collect();
+    contents = contents
+        .iter()
+        .filter(|b| !b" \n\t\r\x0b\x0c".contains(b))
+        .cloned()
+        .collect();
     base64::decode(&contents).unwrap()
 }
 
@@ -226,4 +230,33 @@ fn load_base64_file(path: &str) -> Vec<u8> {
 fn test_load_base64_file() {
     let v = load_base64_file("6.txt");
     assert_eq!(v.len(), 2876);
+}
+
+fn hamming_distance_for_key_size<T: AsRef<[u8]>>(bytes: T, key_size: usize) -> f64 {
+    let leading_bytes = bytes.as_ref().chunks(key_size).take(1);
+    let trailing_bytes = bytes.as_ref()[key_size..].chunks(key_size).take(1);
+
+    let total_distance: usize = leading_bytes
+        .zip(trailing_bytes)
+        .map(|chunks| hamming_distance(chunks.0, chunks.1))
+        .sum();
+    total_distance as f64 / key_size as f64
+}
+
+#[derive(Debug)]
+struct KeySize {
+    size: usize,
+    score: f64,
+}
+
+#[test]
+fn test_hamming_distance_key_size() {
+    let data = load_base64_file("6.txt");
+    let mut distance_scores = Vec::new();
+    for size in 1..50 {
+        let score = hamming_distance_for_key_size(&data, size);
+        distance_scores.push(KeySize { size, score });
+    }
+    distance_scores.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+    dbg!(distance_scores);
 }
