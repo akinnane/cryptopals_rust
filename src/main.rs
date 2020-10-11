@@ -174,11 +174,35 @@ where
 #[test]
 fn s1c5_implement_repeating_key_xor() {
     let input = "Burning 'em, if you ain't quick and nimble\nI go crazy when I hear a cymbal";
-    let expected = "0b3637272a2b2e63622c2e69692a23693a2a3c6324202d623d63343c2a26226324272765272a282b2f20430a652e2c652a3124333a653e2b2027630c692b20283165286326302e27282f";
     let key = "ICE";
+    let expected = "0b3637272a2b2e63622c2e69692a23693a2a3c6324202d623d63343c2a26226324272765272a282b2f20430a652e2c652a3124333a653e2b2027630c692b20283165286326302e27282f";
 
     let result = repeating_key_xor(&input, &key);
     let hex = hex::encode(result);
 
     assert_eq!(hex, expected);
+}
+
+fn hamming_distance<T: AsRef<[u8]>>(one: T, two: T) -> usize {
+    let x = xor(one, two);
+    let mut distance = 0;
+    for byte in x.iter() {
+        let mut b = byte.clone();
+        for _ in 0..8 {
+            let bit = b & 1;
+            if bit == 1 {
+                distance += 1;
+            }
+            b = b >> 1;
+        }
+    }
+    distance
+}
+
+#[test]
+fn test_hamming_distance() {
+    let one = "this is a test";
+    let two = "wokka wokka!!!";
+    let result = hamming_distance(one, two);
+    assert_eq!(result, 37);
 }
