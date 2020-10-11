@@ -3,6 +3,8 @@ use std::collections::BTreeMap;
 use std::fs::File;
 use std::io;
 use std::io::BufRead;
+use std::io::BufReader;
+use std::io::Read;
 
 #[cfg(not(test))]
 use log::debug;
@@ -205,4 +207,23 @@ fn test_hamming_distance() {
     let two = "wokka wokka!!!";
     let result = hamming_distance(one, two);
     assert_eq!(result, 37);
+}
+
+fn load_base64_file(path: &str) -> Vec<u8> {
+    let file = File::open(path).unwrap();
+
+    let mut reader = BufReader::new(file);
+
+    let mut contents = Vec::new();
+    reader.read_to_end(&mut contents).unwrap();
+
+    // https://github.com/marshallpierce/rust-base64/issues/105 :(
+    contents = contents.iter().filter(|b| !b" \n\t\r\x0b\x0c".contains(b)).cloned().collect();
+    base64::decode(&contents).unwrap()
+}
+
+#[test]
+fn test_load_base64_file() {
+    let v = load_base64_file("6.txt");
+    assert_eq!(v.len(), 2876);
 }
