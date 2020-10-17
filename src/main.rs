@@ -47,42 +47,41 @@ fn s1c2_fixed_xor() {
     assert_eq!(output, expected);
 }
 
-static ENGLISH_LETTER_FREQUENCIES: Map<char, f64> = phf_map! {
-    'A' => 0.0651738,
-    'B' => 0.0124248,
-    'C' => 0.0217339,
-    'D' => 0.0349835,
-    'E' => 0.1041442,
-    'F' => 0.0197881,
-    'G' => 0.0158610,
-    'H' => 0.0492888,
-    'I' => 0.0558094,
-    'J' => 0.0009033,
-    'K' => 0.0050529,
-    'L' => 0.0331490,
-    'M' => 0.0202124,
-    'N' => 0.0564513,
-    'O' => 0.0596302,
-    'P' => 0.0137645,
-    'Q' => 0.0008606,
-    'R' => 0.0497563,
-    'S' => 0.0515760,
-    'T' => 0.0729357,
-    'U' => 0.0225134,
-    'V' => 0.0082903,
-    'W' => 0.0171272,
-    'X' => 0.0013692,
-    'Y' => 0.0145984,
-    'Z' => 0.0007836,
-    ' ' => 0.1918182,
+static ENGLISH_LETTER_FREQUENCIES: Map<u8, f64> = phf_map! {
+    b'A' => 0.0651738,
+    b'B' => 0.0124248,
+    b'C' => 0.0217339,
+    b'D' => 0.0349835,
+    b'E' => 0.1041442,
+    b'F' => 0.0197881,
+    b'G' => 0.0158610,
+    b'H' => 0.0492888,
+    b'I' => 0.0558094,
+    b'J' => 0.0009033,
+    b'K' => 0.0050529,
+    b'L' => 0.0331490,
+    b'M' => 0.0202124,
+    b'N' => 0.0564513,
+    b'O' => 0.0596302,
+    b'P' => 0.0137645,
+    b'Q' => 0.0008606,
+    b'R' => 0.0497563,
+    b'S' => 0.0515760,
+    b'T' => 0.0729357,
+    b'U' => 0.0225134,
+    b'V' => 0.0082903,
+    b'W' => 0.0171272,
+    b'X' => 0.0013692,
+    b'Y' => 0.0145984,
+    b'Z' => 0.0007836,
+    b' ' => 0.1918182,
 };
 
-fn detect_english(input: &str) -> f64 {
+fn detect_english<T: AsRef<[u8]>>(input: T) -> f64 {
     let mut char_frequency = BTreeMap::new();
 
-    let weight = 1.0 / input.len() as f64;
-    input
-        .chars()
+    let weight = 1.0 / input.as_ref().len() as f64;
+    input.as_ref().iter()
         .for_each(|c| *char_frequency.entry(c.to_ascii_uppercase()).or_insert(0.0) += weight);
 
     ENGLISH_LETTER_FREQUENCIES
@@ -243,20 +242,89 @@ fn hamming_distance_for_key_size<T: AsRef<[u8]>>(bytes: T, key_size: usize) -> f
     total_distance as f64 / key_size as f64
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct KeySize {
     size: usize,
     score: f64,
 }
 
-#[test]
-fn test_hamming_distance_key_size() {
-    let data = load_base64_file("6.txt");
-    let mut distance_scores = Vec::new();
+fn key_size_hamming_distances<T: AsRef<[u8]>>(cipher_text: T) -> Vec<KeySize> {
+    let mut distance_scores = Vec::with_capacity(cipher_text.as_ref().len());
     for size in 1..50 {
-        let score = hamming_distance_for_key_size(&data, size);
+        let score = hamming_distance_for_key_size(&cipher_text, size);
         distance_scores.push(KeySize { size, score });
     }
     distance_scores.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-    dbg!(distance_scores);
+    distance_scores
+}
+
+#[test]
+fn test_hamming_distance_key_size() {
+    let data = load_base64_file("6.txt");
+    let sizes_hamming_distance = key_size_hamming_distances(&data);
+    assert_eq!(sizes_hamming_distance[0], KeySize{size: 1, score: 6.0});
+    assert_eq!(sizes_hamming_distance[1], KeySize{size: 6, score: 4.0});
+}
+
+fn transpose_blocks<T: AsRef<[u8]>>(ctext: T, key_size: usize) -> Vec<Vec<u8>> {
+    let mut blocks = Vec::with_capacity(key_size);
+    let block_size = ((ctext.as_ref().len() as f64 / key_size as f64).ceil()) as usize;
+    for _ in 0..key_size {
+        blocks.push(Vec::with_capacity(block_size));
+    }
+    for b in ctext.as_ref().chunks(key_size) {
+        for (i, c) in b.iter().enumerate() {
+            blocks[i].push(*c);
+        }
+    }
+    blocks
+}
+
+#[test]
+fn test_transpose_blocks() {
+    let test = "1aA2bB3cC4dD5eE";
+    let result = transpose_blocks(test, 3);
+
+    assert_eq!(result.len(), 3);
+    assert_eq!(result[0], vec![b'1', b'2', b'3', b'4', b'5']);
+    assert_eq!(result[1], vec![b'a', b'b', b'c', b'd', b'e']);
+    assert_eq!(result[2], vec![b'A', b'B', b'C', b'D', b'E']);
+}
+
+fn key_from_xor_vec(xor_vec: &Vec<SingleByteXorResult>) -> Vec<u8> {
+    let mut key = Vec::new();
+    for byte in xor_vec {
+        key.push(byte.byte);
+    }
+    key
+}
+
+#[test]
+fn test_break_repeasting_key_xor() {
+    let cipher_text = load_base64_file("6.txt");
+    let sizes = key_size_hamming_distances(&cipher_text);
+    let mut keys = vec![];
+    for key_size in &sizes{
+        let mut key = vec![];
+        let blocks = transpose_blocks(&cipher_text, key_size.size);
+        for block in blocks {
+            key.push(single_byte_xor(&mut block.iter()));
+        }
+        keys.push(key);
+    }
+
+    let mut scores = vec![];
+
+    for key in &keys {
+        let key = key_from_xor_vec(key);
+        let plain_text = repeating_key_xor(&cipher_text, &key);
+        let score = detect_english(&plain_text);
+        scores.push((score, key, plain_text));
+    }
+    scores.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+
+    let key = String::from_utf8(scores[0].1.clone()).unwrap();
+
+    assert_eq!(&key, "Terminator X: Bring the noise");
+
 }
