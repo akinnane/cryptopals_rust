@@ -11,4 +11,4 @@ base64 = "*"
 hex = "*"
 log = "*"
 phf = { version = "*", features = ["macros"] }
-
+openssl = "*"

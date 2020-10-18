@@ -5,6 +5,7 @@ use std::io;
 use std::io::BufRead;
 use std::io::BufReader;
 use std::io::Read;
+use openssl::symm::{Cipher, Mode, Crypter};
 
 #[cfg(not(test))]
 use log::debug;
@@ -327,4 +328,22 @@ fn test_break_repeasting_key_xor() {
 
     assert_eq!(&key, "Terminator X: Bring the noise");
 
+}
+
+
+#[test]
+fn s1c7_aes_decrypt() {
+    let key = "YELLOW SUBMARINE".as_bytes();
+    let cipher_text = load_base64_file("7.txt");
+
+    let mut decrypter = Crypter::new(
+        Cipher::aes_128_ecb(),
+        Mode::Decrypt,
+        key,
+        None).unwrap();
+    let block_size = 16;
+    let mut output = vec![0; cipher_text.len() + block_size];
+    decrypter.update(&cipher_text, &mut output);
+    let out_string = String::from_utf8(output).unwrap();
+    assert!(out_string.contains(&"Play that funky music"));
 }
