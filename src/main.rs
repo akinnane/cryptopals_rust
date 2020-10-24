@@ -1,11 +1,12 @@
+use openssl::symm::{Cipher, Crypter, Mode};
 use phf::{phf_map, Map};
 use std::collections::BTreeMap;
+use std::collections::HashSet;
 use std::fs::File;
 use std::io;
 use std::io::BufRead;
 use std::io::BufReader;
 use std::io::Read;
-use openssl::symm::{Cipher, Mode, Crypter};
 
 #[cfg(not(test))]
 use log::debug;
@@ -82,7 +83,9 @@ fn detect_english<T: AsRef<[u8]>>(input: T) -> f64 {
     let mut char_frequency = BTreeMap::new();
 
     let weight = 1.0 / input.as_ref().len() as f64;
-    input.as_ref().iter()
+    input
+        .as_ref()
+        .iter()
         .for_each(|c| *char_frequency.entry(c.to_ascii_uppercase()).or_insert(0.0) += weight);
 
     ENGLISH_LETTER_FREQUENCIES
@@ -263,8 +266,20 @@ fn key_size_hamming_distances<T: AsRef<[u8]>>(cipher_text: T) -> Vec<KeySize> {
 fn test_hamming_distance_key_size() {
     let data = load_base64_file("6.txt");
     let sizes_hamming_distance = key_size_hamming_distances(&data);
-    assert_eq!(sizes_hamming_distance[0], KeySize{size: 1, score: 6.0});
-    assert_eq!(sizes_hamming_distance[1], KeySize{size: 6, score: 4.0});
+    assert_eq!(
+        sizes_hamming_distance[0],
+        KeySize {
+            size: 1,
+            score: 6.0
+        }
+    );
+    assert_eq!(
+        sizes_hamming_distance[1],
+        KeySize {
+            size: 6,
+            score: 4.0
+        }
+    );
 }
 
 fn transpose_blocks<T: AsRef<[u8]>>(ctext: T, key_size: usize) -> Vec<Vec<u8>> {
@@ -305,7 +320,7 @@ fn test_break_repeasting_key_xor() {
     let cipher_text = load_base64_file("6.txt");
     let sizes = key_size_hamming_distances(&cipher_text);
     let mut keys = vec![];
-    for key_size in &sizes{
+    for key_size in &sizes {
         let mut key = vec![];
         let blocks = transpose_blocks(&cipher_text, key_size.size);
         for block in blocks {
@@ -327,23 +342,38 @@ fn test_break_repeasting_key_xor() {
     let key = String::from_utf8(scores[0].1.clone()).unwrap();
 
     assert_eq!(&key, "Terminator X: Bring the noise");
-
 }
-
 
 #[test]
 fn s1c7_aes_decrypt() {
     let key = "YELLOW SUBMARINE".as_bytes();
     let cipher_text = load_base64_file("7.txt");
 
-    let mut decrypter = Crypter::new(
-        Cipher::aes_128_ecb(),
-        Mode::Decrypt,
-        key,
-        None).unwrap();
+    let mut decrypter = Crypter::new(Cipher::aes_128_ecb(), Mode::Decrypt, key, None).unwrap();
     let block_size = 16;
     let mut output = vec![0; cipher_text.len() + block_size];
     decrypter.update(&cipher_text, &mut output);
     let out_string = String::from_utf8(output).unwrap();
     assert!(out_string.contains(&"Play that funky music"));
+}
+
+fn is_aes_ecb<T: AsRef<[u8]>>(cipher_text: T, block_size: usize) -> bool {
+    let mut h = HashSet::new();
+    cipher_text
+        .as_ref()
+        .chunks(block_size)
+        .find(|chunk| !h.insert(chunk.clone()))
+        .is_some()
+}
+
+#[test]
+fn s1c9_detect_aes_ecb() {
+    let f = File::open("8.txt").unwrap();
+    let cipher_texts = io::BufReader::new(f);
+    let aes_ecb = cipher_texts
+        .lines()
+        .map(|line| hex::decode(line.unwrap()).unwrap())
+        .filter(|text| is_aes_ecb(&text, 16))
+        .collect::<Vec<Vec<u8>>>();
+    assert_eq!(aes_ecb.len(), 1)
 }
