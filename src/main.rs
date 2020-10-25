@@ -7,6 +7,7 @@ use std::io;
 use std::io::BufRead;
 use std::io::BufReader;
 use std::io::Read;
+use std::iter;
 
 #[cfg(not(test))]
 use log::debug;
@@ -376,4 +377,20 @@ fn s1c9_detect_aes_ecb() {
         .filter(|text| is_aes_ecb(&text, 16))
         .collect::<Vec<Vec<u8>>>();
     assert_eq!(aes_ecb.len(), 1)
+}
+
+fn pkcs7_pad(input: &mut Vec<u8>, block_size: usize) {
+    let padding_size = block_size - input.len() % block_size;
+    let padding_bytes = iter::repeat(padding_size as u8).take(padding_size);
+    input.extend(padding_bytes);
+}
+
+#[test]
+fn s2c10_implement_pkcs7() {
+    let mut input = "YELLOW SUBMARINE".as_bytes().to_vec();
+    pkcs7_pad(&mut input, 20);
+    assert_eq!(
+        input,
+        "YELLOW SUBMARINE\x04\x04\x04\x04".as_bytes().to_vec()
+    );
 }
