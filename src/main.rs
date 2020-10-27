@@ -3,17 +3,17 @@ use phf::{phf_map, Map};
 use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::fs::File;
-use std::io;
-use std::io::BufRead;
 use std::io::BufReader;
 use std::io::Read;
 use std::iter;
 
-#[cfg(not(test))]
-use log::debug;
+// #[cfg(not(test))]
 
 #[cfg(test)]
-use std::println as debug;
+use {
+    std::io,
+    std::io::BufRead,
+};
 
 fn main() {}
 
@@ -345,17 +345,40 @@ fn test_break_repeasting_key_xor() {
     assert_eq!(&key, "Terminator X: Bring the noise");
 }
 
+fn aes_ecb_decrypt<T: AsRef<[u8]>, S: AsRef<[u8]>>(input: T, key: S, pad: bool) -> Vec<u8> {
+    let mut decrypter =
+        Crypter::new(Cipher::aes_128_ecb(), Mode::Decrypt, key.as_ref(), None).unwrap();
+    let block_size = 16;
+    decrypter.pad(pad);
+    let mut output = vec![0; input.as_ref().len() + block_size];
+    let mut count = decrypter.update(input.as_ref(), &mut output).unwrap();
+    count += decrypter.finalize(&mut output[count..]).unwrap();
+    output.truncate(count);
+    output
+}
+
 #[test]
 fn s1c7_aes_decrypt() {
     let key = "YELLOW SUBMARINE".as_bytes();
     let cipher_text = load_base64_file("7.txt");
 
-    let mut decrypter = Crypter::new(Cipher::aes_128_ecb(), Mode::Decrypt, key, None).unwrap();
+    let output = aes_ecb_decrypt(&cipher_text, key, true);
+
+    let plain_text = String::from_utf8(output).unwrap();
+
+    assert_eq!(plain_text.len(), 2876);
+
     let block_size = 16;
-    let mut output = vec![0; cipher_text.len() + block_size];
-    decrypter.update(&cipher_text, &mut output);
-    let out_string = String::from_utf8(output).unwrap();
-    assert!(out_string.contains(&"Play that funky music"));
+
+    assert_eq!(
+        &plain_text[..block_size * 2],
+        "I\'m back and I\'m ringin\' the bel"
+    );
+
+    assert_eq!(
+        &plain_text[plain_text.len() - block_size * 2..],
+        "Come on \nPlay that funky music \n"
+    );
 }
 
 fn is_aes_ecb<T: AsRef<[u8]>>(cipher_text: T, block_size: usize) -> bool {
@@ -385,6 +408,12 @@ fn pkcs7_pad(input: &mut Vec<u8>, block_size: usize) {
     input.extend(padding_bytes);
 }
 
+fn pkcs7_unpad(input: &mut Vec<u8>) {
+    let padding = input.last().unwrap();
+    let length_without_padding = input.len() - *padding as usize;
+    input.truncate(length_without_padding);
+}
+
 #[test]
 fn s2c10_implement_pkcs7() {
     let mut input = "YELLOW SUBMARINE".as_bytes().to_vec();
@@ -392,5 +421,140 @@ fn s2c10_implement_pkcs7() {
     assert_eq!(
         input,
         "YELLOW SUBMARINE\x04\x04\x04\x04".as_bytes().to_vec()
+    );
+}
+
+fn aes_ecb_encrypt<T: AsRef<[u8]>, S: AsRef<[u8]>>(input: T, key: S, pad: bool) -> Vec<u8> {
+    let mut encrypter =
+        Crypter::new(Cipher::aes_128_ecb(), Mode::Encrypt, key.as_ref(), None).unwrap();
+    encrypter.pad(pad);
+    let block_size = 16;
+    let mut output = vec![0; input.as_ref().len() + block_size];
+    let mut count = encrypter.update(input.as_ref(), &mut output).unwrap();
+    count += encrypter.finalize(&mut output[count..]).unwrap();
+    output.truncate(count);
+    output
+}
+
+#[test]
+fn test_aes_ecb_encrpyt() {
+    let cipher_text = load_base64_file("7.txt");
+    let key = "YELLOW SUBMARINE".as_bytes();
+    let decrypted = aes_ecb_decrypt(&cipher_text, key, true);
+
+    let plain_text = String::from_utf8(decrypted.clone()).unwrap();
+    assert!(plain_text.contains(&"Play that funky music"));
+
+    let reencrypted = aes_ecb_encrypt(&decrypted, key, true);
+    assert_eq!(reencrypted, cipher_text);
+}
+
+fn aes_cbc_encrypt<I: AsRef<[u8]>, P: AsRef<[u8]>, T: AsRef<[u8]>>(
+    iv: I,
+    plain_text: P,
+    key: T,
+) -> Vec<u8> {
+
+    let mut output: Vec<u8> = Vec::with_capacity(plain_text.as_ref().len());
+
+    let mut previous_block = iv.as_ref().to_vec();
+
+    let block_size = 16;
+
+
+    let mut plain_text = plain_text.as_ref().clone().to_vec();
+    pkcs7_pad(&mut plain_text, block_size);
+
+    let blocks = plain_text.chunks(block_size);
+
+    for block in blocks {
+        let xored = xor(block, previous_block);
+
+        let encrypted_block = aes_ecb_encrypt(xored, key.as_ref(), false);
+
+        output.extend(&encrypted_block);
+
+        previous_block = encrypted_block;
+    }
+
+    output
+}
+
+#[test]
+fn test_aes_cbc_encrypt() {
+    let cipher_text = load_base64_file("10.txt");
+    let key = "YELLOW SUBMARINE";
+    let iv = vec![0; 16];
+
+    let decrypted = aes_cbc_decrypt(&iv, &cipher_text, &key);
+
+    let plain_text = String::from_utf8(decrypted.clone()).unwrap();
+
+    assert_eq!(plain_text.len(), 2876);
+
+    let block_size = 16;
+    assert_eq!(
+        &plain_text[..block_size * 2],
+        "I\'m back and I\'m ringin\' the bel"
+    );
+
+    assert_eq!(
+        &plain_text[plain_text.len() - block_size * 2..],
+        "Come on \nPlay that funky music \n"
+    );
+
+    let encrypted = aes_cbc_encrypt(&iv, &decrypted, &key);
+
+    assert_eq!(encrypted, cipher_text);
+}
+
+fn aes_cbc_decrypt<I: AsRef<[u8]>, P: AsRef<[u8]>, T: AsRef<[u8]>>(
+    iv: I,
+    plain_text: P,
+    key: T,
+) -> Vec<u8> {
+    let mut output: Vec<u8> = Vec::with_capacity(plain_text.as_ref().len());
+
+    let mut previous_block = iv.as_ref();
+
+    let block_size = 16;
+    let blocks = plain_text.as_ref().chunks(block_size);
+
+    for block in blocks {
+        let decrypted_block = aes_ecb_decrypt(block, key.as_ref(), false);
+
+        let xored = xor(decrypted_block, previous_block);
+
+        output.extend(&xored);
+
+        previous_block = block;
+    }
+
+    pkcs7_unpad(&mut output);
+
+    output
+}
+
+#[test]
+fn s2c10_implement_aes_cbc_mode() {
+    let cipher_text = load_base64_file("10.txt");
+    let key = "YELLOW SUBMARINE";
+    let iv = vec![0; 16];
+
+    let decrypted = aes_cbc_decrypt(iv, cipher_text, key);
+
+    let plain_text = String::from_utf8(decrypted).unwrap();
+
+    assert_eq!(plain_text.len(), 2876);
+
+    let block_size = 16;
+    assert_eq!(
+        &plain_text[..block_size * 2],
+        "I\'m back and I\'m ringin\' the bel"
+    );
+
+    assert_eq!(
+        &plain_text[plain_text.len() - block_size * 2..],
+        "Come on \nPlay that funky music \n"
     );
 }
