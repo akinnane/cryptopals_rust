@@ -39,6 +39,7 @@ dependencies = [
  "log",
  "openssl",
  "phf",
+ "rand",
 ]
 
 [[package]]

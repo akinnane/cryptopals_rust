@@ -1,5 +1,6 @@
 use openssl::symm::{Cipher, Crypter, Mode};
 use phf::{phf_map, Map};
+use rand::prelude::*;
 use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::fs::File;
@@ -10,10 +11,7 @@ use std::iter;
 // #[cfg(not(test))]
 
 #[cfg(test)]
-use {
-    std::io,
-    std::io::BufRead,
-};
+use {std::io, std::io::BufRead};
 
 fn main() {}
 
@@ -454,13 +452,11 @@ fn aes_cbc_encrypt<I: AsRef<[u8]>, P: AsRef<[u8]>, T: AsRef<[u8]>>(
     plain_text: P,
     key: T,
 ) -> Vec<u8> {
-
     let mut output: Vec<u8> = Vec::with_capacity(plain_text.as_ref().len());
 
     let mut previous_block = iv.as_ref().to_vec();
 
     let block_size = 16;
-
 
     let mut plain_text = plain_text.as_ref().clone().to_vec();
     pkcs7_pad(&mut plain_text, block_size);
@@ -557,4 +553,65 @@ fn s2c10_implement_aes_cbc_mode() {
         &plain_text[plain_text.len() - block_size * 2..],
         "Come on \nPlay that funky music \n"
     );
+}
+
+fn random_bytes(size: usize) -> Vec<u8> {
+    let mut data = vec![0u8; size];
+    rand::thread_rng().fill_bytes(&mut data);
+    data.to_vec()
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum EncryptionType {
+    CBC,
+    ECB,
+}
+
+#[derive(Debug)]
+struct OracleOutput {
+    encryption: EncryptionType,
+    cipher_text: Vec<u8>,
+}
+
+fn encryption_oracle<T: AsRef<[u8]>>(plain_text: T) -> OracleOutput {
+    let mut rng = rand::thread_rng();
+    let key = random_bytes(16);
+    let iv = random_bytes(16);
+    let random_size = rng.gen_range(5, 10);
+    let prefix = random_bytes(random_size);
+    let postfix = random_bytes(random_size);
+    let payload = prefix
+        .iter()
+        .chain(plain_text.as_ref().iter())
+        .chain(postfix.iter())
+        .cloned()
+        .collect::<Vec<u8>>();
+    dbg!(payload.len());
+    if rng.gen_range(0, 2) > 0 {
+        let cipher_text = aes_cbc_encrypt(iv, payload, key);
+        OracleOutput {
+            encryption: EncryptionType::CBC,
+            cipher_text: cipher_text,
+        }
+    } else {
+        let cipher_text = aes_ecb_encrypt(payload, key, true);
+        OracleOutput {
+            encryption: EncryptionType::ECB,
+            cipher_text: cipher_text,
+        }
+    }
+}
+
+#[test]
+fn s2_c11_an_ecb_cbc_detection_oracle() {
+    let plain_text = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    dbg!(plain_text.len());
+    for _i in 0..100 {
+        let oracle = encryption_oracle(plain_text);
+        let encryption_type = match is_aes_ecb(&oracle.cipher_text, 16) {
+            true => EncryptionType::ECB,
+            false => EncryptionType::CBC,
+        };
+        assert_eq!(encryption_type, oracle.encryption);
+    }
 }
