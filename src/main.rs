@@ -1,16 +1,14 @@
+use lazy_static::lazy_static;
 use openssl::symm::{Cipher, Crypter, Mode};
 use phf::{phf_map, Map};
 use rand::prelude::*;
 use std::collections::BTreeMap;
-use std::collections::HashSet;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::BufReader;
 use std::io::Read;
 use std::iter;
-use lazy_static::lazy_static;
-
-// #[cfg(not(test))]
 
 #[cfg(test)]
 use {std::io, std::io::BufRead};
@@ -622,7 +620,8 @@ lazy_static! {
     static ref S2_C12_SECRET_KEY: Vec<u8> = random_bytes(16);
 }
 
-const S2_S12_UNKNOWN_STRING: &'static str = "Um9sbGluJyBpbiBteSA1LjAKV2l0aCBteSByYWctdG9wIGRvd24gc28gbXkg\
+const S2_S12_UNKNOWN_STRING: &'static str =
+    "Um9sbGluJyBpbiBteSA1LjAKV2l0aCBteSByYWctdG9wIGRvd24gc28gbXkg\
                                aGFpciBjYW4gYmxvdwpUaGUgZ2lybGllcyBvbiBzdGFuZGJ5IHdhdmluZyBq\
                                dXN0IHRvIHNheSBoaQpEaWQgeW91IHN0b3A/IE5vLCBJIGp1c3QgZHJvdmUg\
                                YnkK";
@@ -664,30 +663,31 @@ fn bytes_as_ascii<T: AsRef<[u8]>>(bytes: T, block_size: usize) -> String {
     output
 }
 
-fn make_lookup_hashmap(padding: &mut Vec<u8>, block_number: usize, block_size: usize) -> HashMap::<Vec<u8>, u8> {
+fn make_lookup_hashmap(
+    padding: &mut Vec<u8>,
+    block_number: usize,
+    block_size: usize,
+) -> HashMap<Vec<u8>, u8> {
     padding.push(0u8);
     (0u8..=255u8)
         .map(|n| {
             *padding.last_mut().expect("Can't mutate padding") = n;
 
-            let block = s2_c12_encryption_oracle(&padding)
-                .cipher_text[(block_number - 1 ) * block_size..block_number * block_size].to_vec();
+            let block = s2_c12_encryption_oracle(&padding).cipher_text
+                [(block_number - 1) * block_size..block_number * block_size]
+                .to_vec();
 
-            (
-                block,
-                n,
-            )
+            (block, n)
         })
         .collect::<HashMap<Vec<u8>, u8>>()
 }
-
 
 #[test]
 fn s2_c12_byte_at_a_time_ecb_decrpytion() {
     let block_size = s2_c12_detect_block_size();
     assert_eq!(block_size, 16);
 
-    let total_size =  s2_c12_encryption_oracle(vec![]).cipher_text.len();
+    let total_size = s2_c12_encryption_oracle(vec![]).cipher_text.len();
 
     let mut known = vec![];
     let mut block_number = 1;
@@ -698,11 +698,15 @@ fn s2_c12_byte_at_a_time_ecb_decrpytion() {
 
         let block_lookup = make_lookup_hashmap(&mut padding, block_number, block_size);
 
-        let oracle_result = s2_c12_encryption_oracle(vec![0u8; (block_number * block_size) - known.len() - 1]);
+        let oracle_result =
+            s2_c12_encryption_oracle(vec![0u8; (block_number * block_size) - known.len() - 1]);
 
-        let block = &oracle_result.cipher_text[(block_number - 1 ) * block_size..block_number * block_size];
+        let block =
+            &oracle_result.cipher_text[(block_number - 1) * block_size..block_number * block_size];
 
-        let decrypted_byte =  *block_lookup.get(block).expect("block of oracle result not in block_lookup");
+        let decrypted_byte = *block_lookup
+            .get(block)
+            .expect("block of oracle result not in block_lookup");
 
         known.push(decrypted_byte);
 
@@ -711,8 +715,8 @@ fn s2_c12_byte_at_a_time_ecb_decrpytion() {
         }
 
         // Why 7?
-        if known.len() >  total_size - 7 {
-            break
+        if known.len() > total_size - 7 {
+            break;
         }
     }
     println!("{}", &std::str::from_utf8(&known).unwrap());
