@@ -13,3 +13,4 @@ log = "*"
 phf = { version = "*", features = ["macros"] }
 openssl = "*"
 rand = "*"
+lazy_static = "*"
