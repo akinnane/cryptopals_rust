@@ -1,3 +1,5 @@
+#![feature(str_split_once)]
+
 use lazy_static::lazy_static;
 use openssl::symm::{Cipher, Crypter, Mode};
 use phf::{phf_map, Map};
@@ -9,6 +11,8 @@ use std::fs::File;
 use std::io::BufReader;
 use std::io::Read;
 use std::iter;
+use std::fmt;
+use std::str::FromStr;
 
 #[cfg(test)]
 use {std::io, std::io::BufRead};
@@ -343,7 +347,7 @@ fn test_break_repeasting_key_xor() {
     assert_eq!(&key, "Terminator X: Bring the noise");
 }
 
-fn aes_ecb_decrypt<T: AsRef<[u8]>, S: AsRef<[u8]>>(input: T, key: S, pad: bool) -> Vec<u8> {
+fn aes_ecb_decrypt_unchecked<T: AsRef<[u8]>, S: AsRef<[u8]>>(input: T, key: S, pad: bool) -> Vec<u8> {
     let mut decrypter =
         Crypter::new(Cipher::aes_128_ecb(), Mode::Decrypt, key.as_ref(), None).unwrap();
     let block_size = 16;
@@ -355,12 +359,24 @@ fn aes_ecb_decrypt<T: AsRef<[u8]>, S: AsRef<[u8]>>(input: T, key: S, pad: bool) 
     output
 }
 
+fn aes_ecb_decrypt<T: AsRef<[u8]>, S: AsRef<[u8]>>(input: T, key: S, pad: bool) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let mut decrypter =
+        Crypter::new(Cipher::aes_128_ecb(), Mode::Decrypt, key.as_ref(), None)?;
+    let block_size = 16;
+    decrypter.pad(pad);
+    let mut output = vec![0; input.as_ref().len() + block_size];
+    let mut count = decrypter.update(input.as_ref(), &mut output)?;
+    count += decrypter.finalize(&mut output[count..]).unwrap();
+    output.truncate(count);
+    Ok(output)
+}
+
 #[test]
 fn s1c7_aes_decrypt() {
     let key = "YELLOW SUBMARINE".as_bytes();
     let cipher_text = load_base64_file("7.txt");
 
-    let output = aes_ecb_decrypt(&cipher_text, key, true);
+    let output = aes_ecb_decrypt_unchecked(&cipher_text, key, true);
 
     let plain_text = String::from_utf8(output).unwrap();
 
@@ -427,10 +443,12 @@ fn aes_ecb_encrypt<T: AsRef<[u8]>, S: AsRef<[u8]>>(input: T, key: S, pad: bool) 
         Crypter::new(Cipher::aes_128_ecb(), Mode::Encrypt, key.as_ref(), None).unwrap();
     encrypter.pad(pad);
     let block_size = 16;
+    dbg!(&String::from_utf8(input.as_ref().to_vec()));
     let mut output = vec![0; input.as_ref().len() + block_size];
     let mut count = encrypter.update(input.as_ref(), &mut output).unwrap();
     count += encrypter.finalize(&mut output[count..]).unwrap();
     output.truncate(count);
+    dbg!(output.len());
     output
 }
 
@@ -438,7 +456,7 @@ fn aes_ecb_encrypt<T: AsRef<[u8]>, S: AsRef<[u8]>>(input: T, key: S, pad: bool) 
 fn test_aes_ecb_encrpyt() {
     let cipher_text = load_base64_file("7.txt");
     let key = "YELLOW SUBMARINE".as_bytes();
-    let decrypted = aes_ecb_decrypt(&cipher_text, key, true);
+    let decrypted = aes_ecb_decrypt_unchecked(&cipher_text, key, true);
 
     let plain_text = String::from_utf8(decrypted.clone()).unwrap();
     assert!(plain_text.contains(&"Play that funky music"));
@@ -517,7 +535,7 @@ fn aes_cbc_decrypt<I: AsRef<[u8]>, P: AsRef<[u8]>, T: AsRef<[u8]>>(
     let blocks = plain_text.as_ref().chunks(block_size);
 
     for block in blocks {
-        let decrypted_block = aes_ecb_decrypt(block, key.as_ref(), false);
+        let decrypted_block = aes_ecb_decrypt_unchecked(block, key.as_ref(), false);
 
         let xored = xor(decrypted_block, previous_block);
 
@@ -617,7 +635,7 @@ fn s2_c11_an_ecb_cbc_detection_oracle() {
 }
 
 lazy_static! {
-    static ref S2_C12_SECRET_KEY: Vec<u8> = random_bytes(16);
+    static ref SECRET_KEY: Vec<u8> = random_bytes(16);
 }
 
 const S2_S12_UNKNOWN_STRING: &'static str =
@@ -634,7 +652,7 @@ fn s2_c12_encryption_oracle<T: AsRef<[u8]>>(plain_text: T) -> OracleOutput {
         .cloned()
         .collect::<Vec<u8>>();
 
-    let cipher_text = aes_ecb_encrypt(payload, &*S2_C12_SECRET_KEY, true);
+    let cipher_text = aes_ecb_encrypt(payload, &*SECRET_KEY, true);
     OracleOutput {
         encryption: EncryptionType::ECB,
         cipher_text: cipher_text,
@@ -657,6 +675,7 @@ fn bytes_as_ascii<T: AsRef<[u8]>>(bytes: T, block_size: usize) -> String {
     let mut output = String::new();
     for slice in bytes.as_ref().chunks(block_size) {
         let block = &slice.iter().map(|b| *b as char).collect::<String>();
+        dbg!(&block);
         output.push_str(&block);
         output.push('\n');
     }
@@ -721,4 +740,243 @@ fn s2_c12_byte_at_a_time_ecb_decrpytion() {
     }
     println!("{}", &std::str::from_utf8(&known).unwrap());
     assert_eq!(known, base64::decode(&S2_S12_UNKNOWN_STRING).unwrap());
+}
+
+fn s2_c13_url_query_string_parser(input: &str) -> HashMap<&str, &str> {
+    input
+        .split("&")
+        .filter_map(|i| i.split_once("="))
+        // Filter out empty values
+        .filter(|pair| pair.0.len() > 0 || pair.1.len() > 0)
+        .collect::<HashMap<&str, &str>>()
+}
+
+#[test]
+fn test_s2_c13_url_query_string_parser_parsing_error() {
+    let input = "fooarst&=";
+    let result = s2_c13_url_query_string_parser(input);
+
+    assert_eq!(result, HashMap::new());
+}
+
+#[test]
+fn test_s2_c13_url_query_string_parser() {
+    let input = "foo=bar&baz=qux&zap=zazzle";
+    let result = s2_c13_url_query_string_parser(input);
+
+    let mut expected = HashMap::new();
+    expected.insert("foo", "bar");
+    expected.insert("baz", "qux");
+    expected.insert("zap", "zazzle");
+
+    assert_eq!(result, expected);
+}
+
+#[derive(PartialEq, Eq, Debug)]
+enum Role {
+    Admin,
+    User,
+}
+
+impl FromStr for Role {
+
+    type Err = ParsingError;
+
+    fn from_str(input: &str) -> Result<Role, Self::Err> {
+        match input {
+            "admin"  => Ok(Role::Admin),
+            "user"  => Ok(Role::User),
+            _ => Err(ParsingError::Role),
+        }
+    }
+}
+
+impl fmt::Display for Role {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Role::Admin => write!(f, "admin"),
+            Role::User => write!(f, "user"),
+        }
+    }
+}
+
+#[derive(PartialEq, Eq, Debug)]
+struct Profile {
+    email: String,
+    uid: usize,
+    role: Role,
+}
+
+impl fmt::Display for Profile {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "email={}&uid={}&role={}",
+               filter_chars(&self.email),
+               filter_chars(&self.uid.to_string()),
+               filter_chars(&self.role.to_string()),
+        )
+    }
+}
+
+fn s2_c13_profile_for<S: Into<String>>(email: S) -> Profile {
+    Profile {
+        email: email.into(),
+        uid: 10,
+        role: Role::User,
+    }
+}
+
+
+fn filter_chars(input: &str) -> String {
+    const FILTER: &'static [char] = &['&', '='];
+    input.replace(FILTER, "")
+}
+
+#[test]
+fn test_s2_c13_encode_profile_as_query_string() {
+    let profile = Profile {
+        email:"foo@bar.com".to_string(),
+        uid: 10,
+        role: Role::User,
+    };
+
+    let result = profile.to_string();
+
+    let expected = "email=foo@bar.com&uid=10&role=user";
+    assert_eq!(result, expected);
+}
+
+
+fn s2_c13_encrypt_profile(profile: &Profile) -> Vec<u8> {
+    const BLOCK_SIZE: usize = 16;
+    let mut serialized_profile = profile.to_string();
+    dbg!(&serialized_profile.len());
+
+    let padding = BLOCK_SIZE - &serialized_profile.len() % BLOCK_SIZE;
+    if padding == 0 {
+        padding == 16;
+    }
+
+    dbg!(&padding);
+
+    serialized_profile.push_str(&(padding as u8 as char).to_string().repeat(padding));
+
+    dbg!(&serialized_profile.len());
+    bytes_as_ascii(&serialized_profile, BLOCK_SIZE);
+    //dbg_blocks(&serialized_profile);
+    aes_ecb_encrypt(serialized_profile, &*SECRET_KEY, false)
+}
+
+fn dbg_blocks<T: AsRef<[u8]>>(input: T) {
+    const BLOCK_SIZE: usize = 16;
+    for chunk in input.as_ref().chunks(BLOCK_SIZE) {
+        println!("{:?}", bytes_as_ascii(chunk, BLOCK_SIZE));
+    }
+}
+
+fn s2_c13_oracle(email: &str) -> Vec<u8> {
+    let profile = s2_c13_profile_for(email);
+    dbg!(&profile);
+    s2_c13_encrypt_profile(&profile)
+}
+
+#[derive(Debug, Clone)]
+struct DecryptionError;
+
+impl std::error::Error for DecryptionError {}
+
+impl fmt::Display for DecryptionError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Failed to decrypt payload")
+    }
+}
+
+#[derive(Debug, Clone)]
+enum ParsingError {
+    Email,
+    Uid,
+    Role,
+}
+
+impl std::error::Error for ParsingError {}
+
+impl fmt::Display for ParsingError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Failed to parse decrypted payload")
+    }
+}
+
+
+fn s2_c13_decrypt_and_parse<T: AsRef<[u8]>>(input: T) -> Result<Profile, Box<dyn std::error::Error>> {
+    let decrypted = aes_ecb_decrypt(&input.as_ref(), &*SECRET_KEY, true)?;
+
+    let utf8 = std::str::from_utf8(&decrypted)?;
+
+    let parameters = s2_c13_url_query_string_parser(&utf8);
+    dbg!(&parameters);
+
+    let email =  parameters.get("email").ok_or(ParsingError::Email)?.to_string();
+    dbg!(&email);
+
+    let uid = parameters.get("uid").ok_or(ParsingError::Uid)?.parse()?;
+
+    let role_str = parameters.get("role").ok_or(ParsingError::Role)?;
+    let role = Role::from_str(&role_str)?;
+
+    Ok(Profile {
+        email,
+        uid,
+        role,
+    })
+}
+
+
+#[test]
+fn test_s2_c13_decode_and_parse() {
+    let input = "email=foo@bar.com&uid=10&role=user";
+
+    let encrpyted = aes_ecb_encrypt(&input, &*SECRET_KEY, true);
+
+    let profile = s2_c13_decrypt_and_parse(&encrpyted).unwrap();
+
+    let expected = Profile {
+        email: "foo@bar.com".to_string(),
+        uid: 10,
+        role: Role::User,
+    };
+
+    assert_eq!(profile, expected);
+}
+
+
+#[test]
+fn test_s2_c13() {
+   let mut admin_email = "AAAAAAAAAAadmin".to_string();
+
+    let padding = 16 - ("admin".len() % 16);
+    admin_email.push_str(&(padding as u8 as char).to_string().repeat(padding));
+
+    let admin_ciphertext = s2_c13_oracle(&admin_email);
+    //bytes_as_ascii(&admin_ciphertext, 16);
+
+    let admin_block = &admin_ciphertext[16..32];
+    //bytes_as_ascii(admin_block, 16);
+
+    let base_email = "AAAAAAAAAAAAA";
+
+    let base_ciphertext = s2_c13_oracle(&base_email);
+    //bytes_as_ascii(&base_ciphertext, 16);
+
+    let base_blocks = &base_ciphertext[0..32];
+    //bytes_as_ascii(&base_blocks, 16);
+
+    let mut cut_and_paste: Vec<u8> = Vec::new();
+    cut_and_paste.extend_from_slice(base_blocks);
+    cut_and_paste.extend_from_slice(admin_block);
+    //bytes_as_ascii(&cut_and_paste, 16);
+
+    let profile = s2_c13_decrypt_and_parse(&cut_and_paste).unwrap();
+
+    dbg!(&profile);
+
+    assert_eq!(profile.role, Role::Admin);
 }
